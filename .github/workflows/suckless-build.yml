@@ -17,6 +17,13 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
+      - name: Validate port scripts
+        run: |
+          for script in scripts/*.sh; do
+            sh -n "$script"
+          done
+          python3 -m py_compile scripts/port-dwm-6.8.py scripts/port-dwm-6.8-features.py
+
       - name: Install X11 build and smoke-test dependencies
         run: |
           sudo apt-get update

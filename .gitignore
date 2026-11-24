@@ -3,6 +3,8 @@
 *.orig
 *.swp
 *.swo
+*.pyc
+__pycache__/
 core
 core.*
 

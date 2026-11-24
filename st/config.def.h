@@ -5,7 +5,7 @@
  *
  * font: see http://freedesktop.org/software/fontconfig/fontconfig-user.html
  */
-static char *font = "Liberation Mono:pixelsize=24:antialias=true:autohint=true";
+static char *font = "Liberation Mono:pixelsize=20:antialias=true:autohint=true";
 static int borderpx = 2;
 
 /*
@@ -98,25 +98,25 @@ float alpha = 0.8;
 
 /* Terminal colors (16 first used in escape sequence) */
 static const char *colorname[] = {
-	/* 8 normal colors */
-	"black",
-	"red3",
-	"green3",
-	"yellow3",
-	"blue2",
-	"magenta3",
-	"cyan3",
-	"gray90",
+/* Normal Colors	*/
+        "#252525",      /*      - darkgray              */
+        "#441A19",      /*      - darkred               */
+        "#66BB6A",      /*      - darkgreen             */
+        "#0067A6",      /*      - darkblue              */
+        "#9C9B7A",      /*      - darkearth             */
+        "#FFD393",      /*      - darkbeige             */
+        "#FF974F",      /*      - darkorangebrown       */
+        "#F54F29",      /*      - darkorange            */
 
-	/* 8 bright colors */
-	"gray50",
-	"red",
-	"green",
-	"yellow",
-	"#5c5cff",
-	"magenta",
-	"cyan",
-	"white",
+/* Bright Colors        */
+        "#4E4946",      /*      - brightgray            */
+        "#A43D3D",      /*      - brightred             */
+        "#94FF99",      /*      - brightgreen           */
+        "#049FFF",      /*      - brightblue            */
+        "#DFDFB3",      /*      - brightearth           */
+        "#FFE3BD",      /*      - brightbeige           */
+        "#FFB27A",      /*      - brightorangebrown     */
+        "#FF8F75",      /*      - brightorange          */
 
 	[255] = 0,
 
@@ -124,10 +124,26 @@ static const char *colorname[] = {
 	"#cccccc",
 	"#555555",
 	"gray90", /* default foreground colour */
-	"black", /* default background colour */
-	[256] = "#1d2021", /* background */
-    	[257] = "#F4722B", /* foreground (heller highlightgray) */
-    	[258] = "grey90", /* cursor */
+	[257] = "black", /* default background colour */
+        /* 8 normal colors */
+   	"#252525",
+        "#441A19",
+        "#66BB6A",
+        "#0067A6",
+        "#9C9B7A",
+        "#FFD393",
+        "#FF974F",
+        [258] = "#F54F29",
+
+        /* 8 bright colors */
+        "#4e4946",
+        "#A43D3D",
+        "#94FF99",
+        "#049FFF",
+        "#DFDFB3",
+        "#FFE3BD",
+        "#FFB2A7",
+        [256] = "#FF8F75",
 };
 
 
@@ -135,9 +151,9 @@ static const char *colorname[] = {
  * Default colors (colorname index)
  * foreground, background, cursor, reverse cursor
  */
-unsigned int defaultfg = 257;
-unsigned int defaultbg = 0;
-unsigned int defaultcs = 258;
+unsigned int defaultfg = 258;
+unsigned int defaultbg = 257;
+unsigned int defaultcs = 256;
 static unsigned int defaultrcs = 0;
 
 /*
@@ -190,7 +206,7 @@ static MouseShortcut mshortcuts[] = {
 };
 
 /* Internal keyboard shortcuts. */
-#define MODKEY Mod1Mask
+#define MODKEY Mod4Mask
 #define TERMMOD (ControlMask|ShiftMask)
 
 static Shortcut shortcuts[] = {

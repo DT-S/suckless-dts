@@ -112,17 +112,17 @@ def port_attachbelow(dwm_c: Path) -> None:
     )
     replace_once(
         dwm_c,
-        "\t\t\t\t\tdetachstack(c);\n"
-        "\t\t\t\t\tc->mon = mons;\n"
+        "\t\t\t\tdetachstack(c);\n"
+        "\t\t\t\tc->mon = mons;\n"
+        "\t\t\t\tattach(c);\n"
+        "\t\t\t\tattachstack(c);\n",
+        "\t\t\t\tdetachstack(c);\n"
+        "\t\t\t\tc->mon = mons;\n"
+        "\t\t\t\tif (attachbelow)\n"
+        "\t\t\t\t\tattachbelowclient(c);\n"
+        "\t\t\t\telse\n"
         "\t\t\t\t\tattach(c);\n"
-        "\t\t\t\t\tattachstack(c);\n",
-        "\t\t\t\t\tdetachstack(c);\n"
-        "\t\t\t\t\tc->mon = mons;\n"
-        "\t\t\t\t\tif (attachbelow)\n"
-        "\t\t\t\t\t\tattachbelowclient(c);\n"
-        "\t\t\t\t\telse\n"
-        "\t\t\t\t\t\tattach(c);\n"
-        "\t\t\t\t\tattachstack(c);\n",
+        "\t\t\t\tattachstack(c);\n",
         "attachbelow: migrate clients from removed monitors",
     )
 

@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   slstatus-1-1:
@@ -110,3 +110,19 @@ jobs:
             build/slstatus/slstatus
             build/slstatus/source
           if-no-files-found: error
+
+      - name: Materialize tested slstatus 1.1 source
+        if: github.event_name == 'push' && hashFiles('.materialize-slstatus-1.1') != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          rm -rf slstatus
+          cp -a build/slstatus/source slstatus
+          rm -f .materialize-slstatus-1.1
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A slstatus .materialize-slstatus-1.1
+          git commit -m "refactor: materialize tested slstatus 1.1 source"
+          git push origin HEAD:"${GITHUB_REF_NAME}"

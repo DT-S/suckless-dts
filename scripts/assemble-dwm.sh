@@ -24,7 +24,9 @@ cd "$work_dir"
 # borderpx intentionally remains 5.
 cp "$repo_root/dwm/config.h" config.h
 
-# Reserve Alt for applications and use the Super/Windows key for DWM.
+# Reserve Alt for applications and use the Super/Windows key for DWM. Add the
+# one configuration value introduced by DWM 6.8 that is absent from the 6.4
+# live configuration.
 python3 - <<'PY'
 from pathlib import Path
 
@@ -34,7 +36,26 @@ old = "#define MODKEY Mod1Mask"
 new = "#define MODKEY Mod4Mask"
 if text.count(old) != 1:
     raise SystemExit(f"expected exactly one {old!r} in config.h")
-path.write_text(text.replace(old, new, 1), encoding="utf-8")
+text = text.replace(old, new, 1)
+
+refresh_decl = "static const int refreshrate = 120;"
+if refresh_decl not in text:
+    anchor = (
+        "static const int lockfullscreen = 1; "
+        "/* 1 will force focus on the fullscreen window */"
+    )
+    if text.count(anchor) != 1:
+        raise SystemExit(f"expected exactly one {anchor!r} in config.h")
+    text = text.replace(
+        anchor,
+        anchor
+        + "\n"
+        + refresh_decl
+        + "  /* refresh rate (per second) for client move/resize */",
+        1,
+    )
+
+path.write_text(text, encoding="utf-8")
 PY
 
 make clean

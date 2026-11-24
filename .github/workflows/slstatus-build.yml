@@ -1,0 +1,112 @@
+name: slstatus build
+
+on:
+  push:
+    branches:
+      - feat/suckless-refresh-2026
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  slstatus-1-1:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Validate slstatus scripts
+        run: |
+          sh -n scripts/assemble-slstatus.sh
+          sh -n scripts/test-slstatus-xephyr.sh
+
+      - name: Install slstatus build and smoke-test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes \
+            build-essential \
+            libx11-dev \
+            x11-utils \
+            xvfb
+
+      - name: Assemble and build slstatus 1.1 candidate
+        run: ./scripts/assemble-slstatus.sh
+
+      - name: Smoke-test stdout mode
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          status=$(./build/slstatus/slstatus -s -1)
+          [[ -n "$status" ]]
+          grep -Fq '%' <<<"$status"
+          grep -Fq 'kb/s' <<<"$status"
+
+      - name: Smoke-test root-window status under Xvfb
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          Xvfb :102 -ac -nolisten tcp -screen 0 1280x720x24 \
+            > /tmp/slstatus-xvfb.log 2>&1 &
+          xvfb_pid=$!
+          slstatus_pid=""
+
+          cleanup() {
+            if [[ -n "$slstatus_pid" ]]; then
+              kill "$slstatus_pid" 2>/dev/null || true
+            fi
+            kill "$xvfb_pid" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+
+          display_ready=0
+          for _ in $(seq 1 50); do
+            if DISPLAY=:102 xdpyinfo >/dev/null 2>&1; then
+              display_ready=1
+              break
+            fi
+            sleep 0.1
+          done
+          if [[ "$display_ready" -ne 1 ]]; then
+            cat /tmp/slstatus-xvfb.log
+            exit 1
+          fi
+
+          DISPLAY=:102 ./build/slstatus/slstatus \
+            > /tmp/slstatus-smoke.log 2>&1 &
+          slstatus_pid=$!
+
+          status_ready=0
+          for _ in $(seq 1 50); do
+            if ! kill -0 "$slstatus_pid" 2>/dev/null; then
+              cat /tmp/slstatus-smoke.log
+              exit 1
+            fi
+            root_status=$(DISPLAY=:102 xprop -root WM_NAME 2>/dev/null || true)
+            if grep -Fq 'kb/s' <<<"$root_status" \
+              && grep -Fq '%' <<<"$root_status"; then
+              status_ready=1
+              break
+            fi
+            sleep 0.1
+          done
+          if [[ "$status_ready" -ne 1 ]]; then
+            cat /tmp/slstatus-smoke.log
+            exit 1
+          fi
+
+          kill -TERM "$slstatus_pid"
+          wait "$slstatus_pid"
+          slstatus_pid=""
+
+      - name: Upload slstatus candidate binary and generated source
+        uses: actions/upload-artifact@v4
+        with:
+          name: slstatus-1.1-candidate
+          path: |
+            build/slstatus/slstatus
+            build/slstatus/source
+          if-no-files-found: error

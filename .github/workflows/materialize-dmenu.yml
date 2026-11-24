@@ -11,13 +11,23 @@ permissions:
 
 jobs:
   materialize-dmenu-5-4:
-    if: ${{ hashFiles('.materialize-dmenu-5.4') != '' }}
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
 
+      - name: Check materialization request
+        id: request
+        shell: bash
+        run: |
+          if [[ -f .materialize-dmenu-5.4 ]]; then
+            echo "requested=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "requested=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Install dmenu build dependencies
+        if: steps.request.outputs.requested == 'true'
         run: |
           sudo apt-get update
           sudo apt-get install --yes \
@@ -30,9 +40,11 @@ jobs:
             libxrender-dev
 
       - name: Build the approved dmenu 5.4 source
+        if: steps.request.outputs.requested == 'true'
         run: ./scripts/assemble-dmenu.sh
 
       - name: Replace dmenu with the tested source
+        if: steps.request.outputs.requested == 'true'
         shell: bash
         run: |
           set -euo pipefail

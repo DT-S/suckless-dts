@@ -29,6 +29,21 @@ else
 fi
 
 log_file=${TMPDIR:-/tmp}/slstatus-xephyr-${display#:}.log
+shim_dir=$(mktemp -d "${TMPDIR:-/tmp}/slstatus-test-bin.XXXXXX")
+
+# The nested DWM inherits the real desktop's D-Bus session and HOME. Starting
+# another dunst, picom and feh there only creates duplicate-service warnings,
+# compositor noise and wallpaper-path errors. Replace those unrelated helpers
+# with harmless stubs while keeping the real slstatus 1.1 candidate in PATH.
+for helper in feh picom dunst; do
+	cat > "$shim_dir/$helper" <<'EOF'
+#!/bin/sh
+exit 0
+EOF
+	chmod 755 "$shim_dir/$helper"
+done
+ln -s "$repo_root/build/slstatus/slstatus" "$shim_dir/slstatus"
+
 Xephyr "$display" -ac -br -noreset -resizeable -screen "$geometry" \
 	> "$log_file" 2>&1 &
 xephyr_pid=$!
@@ -39,6 +54,7 @@ cleanup() {
 		kill "$dwm_pid" 2>/dev/null || true
 	fi
 	kill "$xephyr_pid" 2>/dev/null || true
+	rm -rf "$shim_dir"
 }
 trap cleanup EXIT HUP INT TERM
 
@@ -61,10 +77,9 @@ if [ "$ready" -ne 1 ]; then
 	exit 1
 fi
 
-# DWM's existing autostart launches `slstatus`. Prepending the candidate's
-# directory makes that exact autostart exercise slstatus 1.1, not the installed
-# legacy binary.
-PATH="$repo_root/build/slstatus:$PATH" DISPLAY="$display" \
+# DWM's existing autostart launches `slstatus`. The shim directory makes that
+# exact autostart exercise slstatus 1.1, not the installed legacy binary.
+PATH="$shim_dir:$PATH" DISPLAY="$display" \
 	"$repo_root/build/dwm/dwm" &
 dwm_pid=$!
 
@@ -77,12 +92,18 @@ for _ in $(seq 1 60); do
 	fi
 	if command -v xprop >/dev/null 2>&1; then
 		status_text=$(DISPLAY="$display" xprop -root WM_NAME 2>/dev/null || true)
+		has_percent=0
+		has_speed=0
 		case "$status_text" in
-			*kb/s*%*)
-				status_ready=1
-				break
-				;;
+			*%*) has_percent=1 ;;
 		esac
+		case "$status_text" in
+			*kb/s*) has_speed=1 ;;
+		esac
+		if [ "$has_percent" -eq 1 ] && [ "$has_speed" -eq 1 ]; then
+			status_ready=1
+			break
+		fi
 	fi
 	sleep 0.1
 done

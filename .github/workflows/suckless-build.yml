@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   dwm-6-8:
@@ -94,7 +94,6 @@ jobs:
             exit 1
           fi
 
-          # Exercise the migrated Mod4/Super binding and the managed quit path.
           DISPLAY=:99 xdotool key --clearmodifiers super+shift+q
 
           stopped=0
@@ -113,7 +112,7 @@ jobs:
           wait "$dwm_pid"
           dwm_pid=""
 
-      - name: Upload candidate binary and generated source
+      - name: Upload DWM candidate binary and generated source
         uses: actions/upload-artifact@v4
         with:
           name: dwm-6.8-candidate
@@ -122,25 +121,101 @@ jobs:
             build/dwm/source
           if-no-files-found: error
 
-      - name: Materialize tested DWM 6.8 source
-        if: ${{ hashFiles('.materialize-dwm-6.8') != '' }}
+  st-0-9-3:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Validate shell scripts
+        run: |
+          for script in scripts/*.sh; do
+            sh -n "$script"
+          done
+
+      - name: Install ST build and smoke-test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes \
+            build-essential \
+            curl \
+            libfontconfig1-dev \
+            libfreetype6-dev \
+            libx11-dev \
+            libxext-dev \
+            libxft-dev \
+            libxrender-dev \
+            patch \
+            x11-utils \
+            xdotool \
+            xvfb
+
+      - name: Assemble and build ST 0.9.3 candidate
+        run: ./scripts/assemble-st.sh
+
+      - name: Smoke-test ST under Xvfb
         shell: bash
         run: |
           set -euo pipefail
 
-          rm -rf dwm
-          cp -a build/dwm/source dwm
-          find dwm -type f -exec chmod 0644 {} +
-          rm -f .materialize-dwm-6.8
+          Xvfb :100 -ac -nolisten tcp -screen 0 1280x720x24 \
+            > /tmp/st-xvfb.log 2>&1 &
+          xvfb_pid=$!
+          st_pid=""
 
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A dwm .materialize-dwm-6.8
+          cleanup() {
+            if [[ -n "$st_pid" ]]; then
+              kill "$st_pid" 2>/dev/null || true
+            fi
+            kill "$xvfb_pid" 2>/dev/null || true
+          }
+          trap cleanup EXIT
 
-          if git diff --cached --quiet; then
-            echo "No DWM source changes to materialize."
-            exit 0
+          display_ready=0
+          for _ in $(seq 1 50); do
+            if DISPLAY=:100 xdpyinfo >/dev/null 2>&1; then
+              display_ready=1
+              break
+            fi
+            sleep 0.1
+          done
+          if [[ "$display_ready" -ne 1 ]]; then
+            cat /tmp/st-xvfb.log
+            exit 1
           fi
 
-          git commit -m "refactor: materialize tested DWM 6.8 source"
-          git push
+          DISPLAY=:100 ./build/st/st -e /bin/sh -c \
+            'printf "ST_SMOKE_OK\n"; sleep 30' \
+            > /tmp/st-smoke.log 2>&1 &
+          st_pid=$!
+
+          window_ready=0
+          for _ in $(seq 1 50); do
+            if ! kill -0 "$st_pid" 2>/dev/null; then
+              cat /tmp/st-smoke.log
+              exit 1
+            fi
+            if DISPLAY=:100 xdotool search --pid "$st_pid" >/dev/null 2>&1; then
+              window_ready=1
+              break
+            fi
+            sleep 0.1
+          done
+          if [[ "$window_ready" -ne 1 ]]; then
+            cat /tmp/st-smoke.log
+            exit 1
+          fi
+
+          kill "$st_pid"
+          wait "$st_pid" || true
+          st_pid=""
+
+      - name: Upload ST candidate binary, source and patches
+        uses: actions/upload-artifact@v4
+        with:
+          name: st-0.9.3-candidate
+          path: |
+            build/st/st
+            build/st/source
+            build/st/patches
+          if-no-files-found: error

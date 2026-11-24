@@ -25,7 +25,6 @@
 #define INTERSECT(x,y,w,h,r)  (MAX(0, MIN((x)+(w),(r).x_org+(r).width)  - MAX((x),(r).x_org)) \
                              * MAX(0, MIN((y)+(h),(r).y_org+(r).height) - MAX((y),(r).y_org)))
 #define TEXTW(X)              (drw_fontset_getwidth(drw, (X)) + lrpad)
-
 #define OPAQUE                0xffu
 
 /* enums */
@@ -33,6 +32,7 @@ enum { SchemeNorm, SchemeSel, SchemeOut, SchemeLast }; /* color schemes */
 
 struct item {
 	char *text;
+	unsigned int width;
 	struct item *left, *right;
 	int out;
 };
@@ -56,7 +56,6 @@ static XIC xic;
 static Drw *drw;
 static Clr *scheme[SchemeLast];
 
-static int useargb = 0;
 static Visual *visual;
 static int depth;
 static Colormap cmap;
@@ -65,7 +64,7 @@ static Colormap cmap;
 
 static int (*fstrncmp)(const char *, const char *, size_t) = strncmp;
 static char *(*fstrstr)(const char *, const char *) = strstr;
-static void xinitvisual();
+static void xinitvisual(void);
 
 static unsigned int
 textw_clamp(const char *str, unsigned int n)
@@ -108,10 +107,11 @@ calcoffsets(void)
 static int
 max_textw(void)
 {
-	int len = 0;
+	unsigned int len = 0;
+
 	for (struct item *item = items; item && item->text; item++)
-		len = MAX(TEXTW(item->text), len);
-	return len;
+		len = MAX(item->width, len);
+	return (int)len;
 }
 
 static void
@@ -119,7 +119,7 @@ cleanup(void)
 {
 	size_t i;
 
-	XUngrabKey(dpy, AnyKey, AnyModifier, root);
+	XUngrabKeyboard(dpy, CurrentTime);
 	for (i = 0; i < SchemeLast; i++)
 		free(scheme[i]);
 	for (i = 0; items && items[i].text; ++i)
@@ -582,6 +582,7 @@ readstdin(void)
 			line[len - 1] = '\0';
 		if (!(items[i].text = strdup(line)))
 			die("strdup:");
+		items[i].width = TEXTW(line);
 
 		items[i].out = 0;
 	}
@@ -646,7 +647,7 @@ setup(void)
 #endif
 	/* init appearance */
 	for (j = 0; j < SchemeLast; j++)
-		scheme[j] = drw_scm_create(drw, colors[j], alphas[i], 2);
+		scheme[j] = drw_scm_create(drw, colors[j], 2, alphas[j]);
 
 	clip = XInternAtom(dpy, "CLIPBOARD",   False);
 	utf8 = XInternAtom(dpy, "UTF8_STRING", False);
@@ -684,14 +685,13 @@ setup(void)
 
 		if (centered) {
 			mw = MIN(MAX(max_textw() + promptw, min_width), info[i].width);
-			x = info[i].x_org + ((info[i].width  - mw) / 2);
+			x = info[i].x_org + ((info[i].width - mw) / 2);
 			y = info[i].y_org + ((info[i].height - mh) / 2);
 		} else {
 			x = info[i].x_org;
 			y = info[i].y_org + (topbar ? 0 : info[i].height - mh);
 			mw = info[i].width;
 		}
-
 		XFree(info);
 	} else
 #endif
@@ -699,10 +699,9 @@ setup(void)
 		if (!XGetWindowAttributes(dpy, parentwin, &wa))
 			die("could not get embedding window attributes: 0x%lx",
 			    parentwin);
-
 		if (centered) {
 			mw = MIN(MAX(max_textw() + promptw, min_width), wa.width);
-			x = (wa.width  - mw) / 2;
+			x = (wa.width - mw) / 2;
 			y = (wa.height - mh) / 2;
 		} else {
 			x = 0;
@@ -716,18 +715,16 @@ setup(void)
 
 	/* create menu window */
 	swa.override_redirect = True;
-        swa.background_pixel = 0;
-        swa.border_pixel = 0;
-        swa.colormap = cmap;
+	swa.background_pixel = 0;
+	swa.border_pixel = 0;
+	swa.colormap = cmap;
 	swa.event_mask = ExposureMask | KeyPressMask | VisibilityChangeMask;
-        win = XCreateWindow(dpy, root, x, y, mw, mh, border_width,
-                            depth, CopyFromParent, visual,
-                            CWOverrideRedirect | CWBackPixel | CWBorderPixel | CWColormap | CWEventMask, &swa);
-
-        if (border_width)
-                XSetWindowBorder(dpy, win, scheme[SchemeSel][ColBg].pixel);
+	win = XCreateWindow(dpy, root, x, y, mw, mh, border_width,
+	                    depth, CopyFromParent, visual,
+	                    CWOverrideRedirect | CWBackPixel | CWBorderPixel | CWColormap | CWEventMask, &swa);
+	if (border_width)
+		XSetWindowBorder(dpy, win, scheme[SchemeSel][ColBg].pixel);
 	XSetClassHint(dpy, win, &ch);
-
 
 	/* input methods */
 	if ((xim = XOpenIM(dpy, NULL, NULL, NULL)) == NULL)
@@ -754,8 +751,8 @@ setup(void)
 static void
 usage(void)
 {
-	die("usage: dmenu [-bfiv] [-l lines] [-p prompt] [-fn font] [-m monitor]\n"
-	    "             [-nb color] [-nf color] [-sb color] [-sf color] [-w windowid]");
+	die("usage: dmenu [-bcfiv] [-l lines] [-p prompt] [-fn font] [-m monitor]\n"
+	    "             [-nb color] [-nf color] [-sb color] [-sf color] [-bw width] [-w windowid]");
 }
 
 int
@@ -771,10 +768,10 @@ main(int argc, char *argv[])
 			exit(0);
 		} else if (!strcmp(argv[i], "-b")) /* appears at the bottom of the screen */
 			topbar = 0;
-		else if (!strcmp(argv[i], "-f"))   /* grabs keyboard before reading stdin */
-			fast = 1;
 		else if (!strcmp(argv[i], "-c"))   /* centers dmenu on screen */
 			centered = 1;
+		else if (!strcmp(argv[i], "-f"))   /* grabs keyboard before reading stdin */
+			fast = 1;
 		else if (!strcmp(argv[i], "-i")) { /* case-insensitive item matching */
 			fstrncmp = strncasecmp;
 			fstrstr = cistrstr;
@@ -797,10 +794,10 @@ main(int argc, char *argv[])
 			colors[SchemeSel][ColBg] = argv[++i];
 		else if (!strcmp(argv[i], "-sf"))  /* selected foreground color */
 			colors[SchemeSel][ColFg] = argv[++i];
+		else if (!strcmp(argv[i], "-bw"))  /* border width */
+			border_width = (unsigned int)atoi(argv[++i]);
 		else if (!strcmp(argv[i], "-w"))   /* embedding window id */
 			embed = argv[++i];
-		else if (!strcmp(argv[i], "-bw"))
-			border_width = atoi(argv[++i]); /* border width */
 		else
 			usage();
 
@@ -839,37 +836,35 @@ main(int argc, char *argv[])
 	return 1; /* unreachable */
 }
 
-void
-xinitvisual()
+
+static void
+xinitvisual(void)
 {
 	XVisualInfo *infos;
 	XRenderPictFormat *fmt;
-	int nitems;
-	int i;
-
 	XVisualInfo tpl = {
 		.screen = screen,
 		.depth = 32,
 		.class = TrueColor
 	};
 	long masks = VisualScreenMask | VisualDepthMask | VisualClassMask;
+	int i, nitems;
 
 	infos = XGetVisualInfo(dpy, masks, &tpl, &nitems);
 	visual = NULL;
-	for(i = 0; i < nitems; i ++) {
+	for (i = 0; infos && i < nitems; i++) {
 		fmt = XRenderFindVisualFormat(dpy, infos[i].visual);
-		if (fmt->type == PictTypeDirect && fmt->direct.alphaMask) {
-			 visual = infos[i].visual;
-			 depth = infos[i].depth;
-			 cmap = XCreateColormap(dpy, root, visual, AllocNone);
-			 useargb = 1;
-			 break;
+		if (fmt && fmt->type == PictTypeDirect && fmt->direct.alphaMask) {
+			visual = infos[i].visual;
+			depth = infos[i].depth;
+			cmap = XCreateColormap(dpy, root, visual, AllocNone);
+			break;
 		}
 	}
+	if (infos)
+		XFree(infos);
 
-	XFree(infos);
-
-	if (! visual) {
+	if (!visual) {
 		visual = DefaultVisual(dpy, screen);
 		depth = DefaultDepth(dpy, screen);
 		cmap = DefaultColormap(dpy, screen);

@@ -37,12 +37,34 @@ jobs:
             libxft-dev \
             libxinerama-dev \
             libxrender-dev \
+            ncurses-bin \
             x11-utils \
             xdotool \
             xvfb
 
       - name: Build and smoke-test the integrated stack
         run: ./scripts/smoke-stack-xvfb.sh
+
+      - name: Exercise safe installation and rollback
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          ./scripts/install-stack.sh
+          test -x /usr/local/bin/dwm
+          test -x /usr/local/bin/st
+          test -x /usr/local/bin/dmenu
+          test -x /usr/local/bin/slstatus
+
+          backup=$(readlink -f "$HOME/.local/state/suckless-dts/backups/latest")
+          test -f "$backup/manifest.tsv"
+          ./scripts/rollback-stack.sh "$backup"
+
+          while IFS=$'\t' read -r action target; do
+            if [[ "$action" == "remove" ]]; then
+              test ! -e "$target"
+            fi
+          done < "$backup/manifest.tsv"
 
       - name: Upload staged installation
         uses: actions/upload-artifact@v4

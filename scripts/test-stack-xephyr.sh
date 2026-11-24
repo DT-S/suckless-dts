@@ -4,12 +4,21 @@ set -eu
 repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 geometry=${STACK_TEST_GEOMETRY:-1920x1080}
 
-for command in Xephyr xdpyinfo xprop xdotool; do
-	if ! command -v "$command" >/dev/null 2>&1; then
-		printf 'Missing %s. Install xorg-server-xephyr and xorg-xprop/xdotool first.\n' "$command" >&2
+require_command() {
+	command_name=$1
+	package_name=$2
+
+	if ! command -v "$command_name" >/dev/null 2>&1; then
+		printf 'Missing %s. Install it with: sudo pacman -S --needed %s\n' \
+			"$command_name" "$package_name" >&2
 		exit 1
 	fi
-done
+}
+
+require_command Xephyr xorg-server-xephyr
+require_command xdpyinfo xorg-xdpyinfo
+require_command xprop xorg-xprop
+require_command xdotool xdotool
 
 "$repo_root/scripts/build-stack.sh"
 bin_dir="$repo_root/build/stack/root/usr/local/bin"

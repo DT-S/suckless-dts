@@ -159,6 +159,22 @@ Copy the selected text to the clipboard selection.
 .TP
 .B Ctrl-Shift-v
 Paste from the clipboard selection.
+.TP
+.B Shift-Page Up / Shift-Page Down
+Scroll through terminal history.
+.TP
+.B Mouse wheel
+Scroll the normal terminal history by three rows, including during a selection.
+Applications using mouse reporting or an alternate screen keep their controls.
+.TP
+.B Left-button drag at the top or bottom text row
+Extend the selection while automatically scrolling after a short delay.
+Move farther outside the window to scroll faster. Release the button or move
+back into the centre to stop. Release, then use Ctrl-Shift-c to copy.
+.PP
+Hold Shift to select terminal text when an application uses mouse reporting.
+Selections can span the retained history (up to 2000 rows) and the live screen.
+Resizing or switching screens cancels the current selection.
 .SH CUSTOMIZATION
 .B st
 can be customized by creating a custom config.h and (re)compiling the source

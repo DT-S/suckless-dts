@@ -43,9 +43,10 @@
 #define ISCONTROLC1(c)		(BETWEEN(c, 0x80, 0x9f))
 #define ISCONTROL(c)		(ISCONTROLC0(c) || ISCONTROLC1(c))
 #define ISDELIM(u)		(u && wcschr(worddelimiters, u))
-#define TLINE(y)		((y) < term.scr ? term.hist[((y) + term.histi - \
-            term.scr + HISTSIZE + 1) % HISTSIZE] : \
-            term.line[(y) - term.scr])
+/* History rows are negative; screen rows start at zero. */
+#define HLINE(y)		((y) < 0 ? term.hist[((y) + term.histi + \
+            HISTSIZE + 1) % HISTSIZE] : term.line[(y)])
+#define TLINE(y)		HLINE((y) - term.scr)
 
 enum term_mode {
 	MODE_WRAP        = 1 << 0,
@@ -100,6 +101,7 @@ typedef struct {
 	int type;
 	int snap;
 	/*
+	 * Selection rows are relative to the live screen; history rows are negative.
 	 * Selection variables:
 	 * nb – normalized coordinates of the beginning of the selection
 	 * ne – normalized coordinates of the end of the selection
@@ -121,6 +123,7 @@ typedef struct {
 	Line *alt;    /* alternate screen */
 	Line hist[HISTSIZE]; /* history buffer */
 	int histi;    /* history index */
+	int histlen;  /* number of valid history rows */
 	int scr;      /* scroll back */
 	int *dirty;   /* dirtyness of lines */
 	TCursor c;    /* cursor */
@@ -193,7 +196,7 @@ static void tputtab(int);
 static void tputc(Rune);
 static void treset(void);
 static void tscrollup(int, int, int);
-static void tscrolldown(int, int, int);
+static void tscrolldown(int, int);
 static void tsetattr(const int *, int);
 static void tsetchar(Rune, const Glyph *, int, int);
 static void tsetdirt(int, int);
@@ -214,6 +217,9 @@ static void drawregion(int, int, int, int);
 static void selnormalize(void);
 static void selscroll(int, int);
 static void selsnap(int *, int *, int);
+static void selshift(int);
+static void tsetdirtbuffer(int, int);
+static int selectedline(int, int);
 
 static size_t utf8decode(const char *, Rune *, size_t);
 static Rune utf8decodebyte(char, size_t *);
@@ -416,10 +422,10 @@ tlinelen(int y)
 {
 	int i = term.col;
 
-	if (TLINE(y)[i - 1].mode & ATTR_WRAP)
+	if (HLINE(y)[i - 1].mode & ATTR_WRAP)
 		return i;
 
-	while (i > 0 && TLINE(y)[i - 1].u == ' ')
+	while (i > 0 && HLINE(y)[i - 1].u == ' ')
 		--i;
 
 	return i;
@@ -434,12 +440,12 @@ selstart(int col, int row, int snap)
 	sel.alt = IS_SET(MODE_ALTSCREEN);
 	sel.snap = snap;
 	sel.oe.x = sel.ob.x = col;
-	sel.oe.y = sel.ob.y = row;
+	sel.oe.y = sel.ob.y = row - term.scr;
 	selnormalize();
 
 	if (sel.snap != 0)
 		sel.mode = SEL_READY;
-	tsetdirt(sel.nb.y, sel.ne.y);
+	tsetdirtbuffer(sel.nb.y, sel.ne.y);
 }
 
 void
@@ -447,9 +453,10 @@ selextend(int col, int row, int type, int done)
 {
 	int oldey, oldex, oldsby, oldsey, oldtype;
 
-	if (sel.mode == SEL_IDLE)
+	if (!selongoing())
 		return;
-	if (done && sel.mode == SEL_EMPTY) {
+	if (done && sel.mode == SEL_EMPTY &&
+	    col == sel.ob.x && row - term.scr == sel.ob.y) {
 		selclear();
 		return;
 	}
@@ -461,12 +468,12 @@ selextend(int col, int row, int type, int done)
 	oldtype = sel.type;
 
 	sel.oe.x = col;
-	sel.oe.y = row;
-	selnormalize();
+	sel.oe.y = row - term.scr;
 	sel.type = type;
+	selnormalize();
 
 	if (oldey != sel.oe.y || oldex != sel.oe.x || oldtype != sel.type || sel.mode == SEL_EMPTY)
-		tsetdirt(MIN(sel.nb.y, oldsby), MAX(sel.ne.y, oldsey));
+		tsetdirtbuffer(MIN(sel.nb.y, oldsby), MAX(sel.ne.y, oldsey));
 
 	sel.mode = done ? SEL_IDLE : SEL_READY;
 }
@@ -502,6 +509,19 @@ selnormalize(void)
 int
 selected(int x, int y)
 {
+	return selectedline(x, y - term.scr);
+}
+
+int
+selongoing(void)
+{
+	return sel.mode != SEL_IDLE && sel.ob.x != -1 &&
+	       sel.alt == IS_SET(MODE_ALTSCREEN);
+}
+
+int
+selectedline(int x, int y)
+{
 	if (sel.mode == SEL_EMPTY || sel.ob.x == -1 ||
 			sel.alt != IS_SET(MODE_ALTSCREEN))
 		return 0;
@@ -528,7 +548,7 @@ selsnap(int *x, int *y, int direction)
 		 * Snap around if the word wraps around at the end or
 		 * beginning of a line.
 		 */
-		prevgp = &TLINE(*y)[*x];
+		prevgp = &HLINE(*y)[*x];
 		prevdelim = ISDELIM(prevgp->u);
 		for (;;) {
 			newx = *x + direction;
@@ -536,21 +556,21 @@ selsnap(int *x, int *y, int direction)
 			if (!BETWEEN(newx, 0, term.col - 1)) {
 				newy += direction;
 				newx = (newx + term.col) % term.col;
-				if (!BETWEEN(newy, 0, term.row - 1))
+				if (!BETWEEN(newy, sel.alt ? 0 : -term.histlen, term.row - 1))
 					break;
 
 				if (direction > 0)
 					yt = *y, xt = *x;
 				else
 					yt = newy, xt = newx;
-				if (!(TLINE(yt)[xt].mode & ATTR_WRAP))
+				if (!(HLINE(yt)[xt].mode & ATTR_WRAP))
 					break;
 			}
 
 			if (newx >= tlinelen(newy))
 				break;
 
-			gp = &TLINE(newy)[newx];
+			gp = &HLINE(newy)[newx];
 			delim = ISDELIM(gp->u);
 			if (!(gp->mode & ATTR_WDUMMY) && (delim != prevdelim
 					|| (delim && gp->u != prevgp->u)))
@@ -570,15 +590,15 @@ selsnap(int *x, int *y, int direction)
 		 */
 		*x = (direction < 0) ? 0 : term.col - 1;
 		if (direction < 0) {
-			for (; *y > 0; *y += direction) {
-				if (!(TLINE(*y-1)[term.col-1].mode
+			for (; *y > (sel.alt ? 0 : -term.histlen); *y += direction) {
+				if (!(HLINE(*y-1)[term.col-1].mode
 						& ATTR_WRAP)) {
 					break;
 				}
 			}
 		} else if (direction > 0) {
 			for (; *y < term.row-1; *y += direction) {
-				if (!(TLINE(*y)[term.col-1].mode
+				if (!(HLINE(*y)[term.col-1].mode
 						& ATTR_WRAP)) {
 					break;
 				}
@@ -592,51 +612,46 @@ char *
 getsel(void)
 {
 	char *str, *ptr;
-	int y, bufsize, lastx, linelen;
-	const Glyph *gp, *last;
+	size_t rows, bufsize;
+	int x, y, firstx, lastx, endx, linelen, wrapped;
+	Line line;
 
-	if (sel.ob.x == -1)
+	if (sel.ob.x == -1 || sel.alt != IS_SET(MODE_ALTSCREEN))
 		return NULL;
 
-	bufsize = (term.col+1) * (sel.ne.y-sel.nb.y+1) * UTF_SIZ;
+	rows = sel.ne.y - sel.nb.y + 1;
+	if (rows > (SIZE_MAX - 1) / UTF_SIZ / ((size_t)term.col + 1))
+		die("selection too large\n");
+	bufsize = ((size_t)term.col + 1) * rows * UTF_SIZ + 1;
 	ptr = str = xmalloc(bufsize);
 
-	/* append every set & selected glyph to the selection */
+	/* Read the whole retained selection, including rows outside the view. */
 	for (y = sel.nb.y; y <= sel.ne.y; y++) {
-		if ((linelen = tlinelen(y)) == 0) {
-			*ptr++ = '\n';
-			continue;
-		}
-
+		line = HLINE(y);
+		linelen = tlinelen(y);
+		wrapped = line[term.col - 1].mode & ATTR_WRAP;
 		if (sel.type == SEL_RECTANGULAR) {
-			gp = &TLINE(y)[sel.nb.x];
+			firstx = sel.nb.x;
 			lastx = sel.ne.x;
 		} else {
-			gp = &TLINE(y)[sel.nb.y == y ? sel.nb.x : 0];
-			lastx = (sel.ne.y == y) ? sel.ne.x : term.col-1;
-		}
-		last = &TLINE(y)[MIN(lastx, linelen-1)];
-		while (last >= gp && last->u == ' ')
-			--last;
-
-		for ( ; gp <= last; ++gp) {
-			if (gp->mode & ATTR_WDUMMY)
-				continue;
-
-			ptr += utf8encode(gp->u, ptr);
+			firstx = sel.nb.y == y ? sel.nb.x : 0;
+			lastx = sel.ne.y == y ? sel.ne.x : term.col - 1;
 		}
 
-		/*
-		 * Copy and pasting of line endings is inconsistent
-		 * in the inconsistent terminal and GUI world.
-		 * The best solution seems like to produce '\n' when
-		 * something is copied from st and convert '\n' to
-		 * '\r', when something to be pasted is received by
-		 * st.
-		 * FIXME: Fix the computer world.
-		 */
+		endx = MIN(lastx, linelen - 1);
+		/* Spaces before a soft wrap are part of the logical line. */
+		if (!(wrapped && lastx == term.col - 1 &&
+		      sel.type == SEL_REGULAR))
+			while (endx >= firstx && line[endx].u == ' ')
+				--endx;
+
+		for (x = firstx; x <= endx; x++) {
+			if (!(line[x].mode & ATTR_WDUMMY))
+				ptr += utf8encode(line[x].u, ptr);
+		}
+
 		if ((y < sel.ne.y || lastx >= linelen) &&
-		    (!(last->mode & ATTR_WRAP) || sel.type == SEL_RECTANGULAR))
+		    (!wrapped || sel.type == SEL_RECTANGULAR))
 			*ptr++ = '\n';
 	}
 	*ptr = 0;
@@ -650,7 +665,16 @@ selclear(void)
 		return;
 	sel.mode = SEL_IDLE;
 	sel.ob.x = -1;
-	tsetdirt(sel.nb.y, sel.ne.y);
+	tsetdirtbuffer(sel.nb.y, sel.ne.y);
+}
+
+void
+tsetdirtbuffer(int top, int bot)
+{
+	top += term.scr;
+	bot += term.scr;
+	if (bot >= 0 && top < term.row)
+		tsetdirt(top, bot);
 }
 
 void
@@ -1022,6 +1046,9 @@ treset(void)
 {
 	uint i;
 
+	selclear();
+	term.histlen = 0;
+	term.scr = 0;
 	term.c = (TCursor){{
 		.mode = ATTR_NULL,
 		.fg = defaultfg,
@@ -1058,71 +1085,72 @@ tswapscreen(void)
 {
 	Line *tmp = term.line;
 
+	selclear();
+	term.scr = 0;
 	term.line = term.alt;
 	term.alt = tmp;
 	term.mode ^= MODE_ALTSCREEN;
 	tfulldirt();
 }
 
-void
-kscrolldown(const Arg* a)
+int
+tisaltscreen(void)
 {
-	int n = a->i;
+	return IS_SET(MODE_ALTSCREEN);
+}
 
-	if (n < 0)
-		n = term.row + n;
+int
+scrollview(int delta)
+{
+	int old = term.scr;
 
-	if (n > term.scr)
-		n = term.scr;
-
-	if (term.scr > 0) {
-		term.scr -= n;
-		selscroll(0, -n);
+	if (tisaltscreen())
+		return 0;
+	/* Clamp before adding: callers may request the entire history. */
+	if (delta > 0)
+		term.scr += MIN(delta, term.histlen - term.scr);
+	else if (delta < 0)
+		term.scr += MAX(delta, -term.scr);
+	if (term.scr != old)
 		tfulldirt();
-	}
+	return term.scr - old;
 }
 
 void
-kscrollup(const Arg* a)
+kscrolldown(const Arg *a)
 {
-	int n = a->i;
+	int n = a->i < 0 ? MAX(1, term.row + a->i) : a->i;
 
-	if (n < 0)
-		n = term.row + n;
-
-	if (term.scr <= HISTSIZE-n) {
-		term.scr += n;
-		selscroll(0, n);
-		tfulldirt();
-	}
+	scrollview(-n);
 }
 
 void
-tscrolldown(int orig, int n, int copyhist)
+kscrollup(const Arg *a)
+{
+	int n = a->i < 0 ? MAX(1, term.row + a->i) : a->i;
+
+	scrollview(n);
+}
+
+void
+tscrolldown(int orig, int n)
 {
 	int i;
 	Line temp;
 
-	LIMIT(n, 0, term.bot-orig+1);
+	LIMIT(n, 0, term.bot - orig + 1);
+	if (!n)
+		return;
 
-	if (copyhist) {
-		term.histi = (term.histi - 1 + HISTSIZE) % HISTSIZE;
-		temp = term.hist[term.histi];
-		term.hist[term.histi] = term.line[term.bot];
-		term.line[term.bot] = temp;
-	}
-
-	tsetdirt(orig, term.bot-n);
-	tclearregion(0, term.bot-n+1, term.col-1, term.bot);
-
-	for (i = term.bot; i >= orig+n; i--) {
+	/* Reverse index and insert-line operations do not append history. */
+	selscroll(orig, n);
+	for (i = term.bot; i >= orig + n; i--) {
 		temp = term.line[i];
-		term.line[i] = term.line[i-n];
-		term.line[i-n] = temp;
+		term.line[i] = term.line[i - n];
+		term.line[i - n] = temp;
 	}
-
-	if (term.scr == 0)
-		selscroll(orig, n);
+	tclearregion(0, orig, term.col - 1, orig + n - 1);
+	tfulldirt();
 }
 
 void
@@ -1131,49 +1159,64 @@ tscrollup(int orig, int n, int copyhist)
 	int i;
 	Line temp;
 
-	LIMIT(n, 0, term.bot-orig+1);
+	LIMIT(n, 0, term.bot - orig + 1);
+	if (!n)
+		return;
+	copyhist = copyhist && !tisaltscreen() && orig == 0 &&
+	           term.bot == term.row - 1;
 
 	if (copyhist) {
-		term.histi = (term.histi + 1) % HISTSIZE;
-		temp = term.hist[term.histi];
-		term.hist[term.histi] = term.line[orig];
-		term.line[orig] = temp;
-	}
-
-	if (term.scr > 0 && term.scr < HISTSIZE)
-		term.scr = MIN(term.scr + n, HISTSIZE-1);
-
-	tclearregion(0, orig, term.col-1, orig+n-1);
-	tsetdirt(orig+n, term.bot);
-
-	for (i = orig; i <= term.bot-n; i++) {
-		temp = term.line[i];
-		term.line[i] = term.line[i+n];
-		term.line[i+n] = temp;
-	}
-
-	if (term.scr == 0)
+		for (i = 0; i < n; i++) {
+			term.histi = (term.histi + 1) % HISTSIZE;
+			temp = term.hist[term.histi];
+			term.hist[term.histi] = term.line[i];
+			term.line[i] = temp;
+		}
+		term.histlen = MIN(HISTSIZE, term.histlen + n);
+		if (term.scr > 0)
+			term.scr = MIN(term.scr + n, term.histlen);
+		selshift(-n);
+		if (sel.ob.x != -1 && sel.nb.y < -term.histlen)
+			selclear();
+	} else {
 		selscroll(orig, -n);
+	}
+
+	for (i = orig; i <= term.bot - n; i++) {
+		temp = term.line[i];
+		term.line[i] = term.line[i + n];
+		term.line[i + n] = temp;
+	}
+	/* Clear only the vacated rows after shifting the selection. */
+	tclearregion(0, term.bot - n + 1, term.col - 1, term.bot);
+	tfulldirt();
+}
+
+void
+selshift(int n)
+{
+	if (sel.ob.x == -1 || sel.alt != IS_SET(MODE_ALTSCREEN))
+		return;
+
+	sel.ob.y += n;
+	sel.oe.y += n;
+	sel.nb.y += n;
+	sel.ne.y += n;
 }
 
 void
 selscroll(int orig, int n)
 {
-	if (sel.ob.x == -1 || sel.alt != IS_SET(MODE_ALTSCREEN))
+	if (sel.ob.x == -1 || sel.alt != IS_SET(MODE_ALTSCREEN) ||
+	    sel.ne.y < orig || sel.nb.y > term.bot)
 		return;
 
-	if (BETWEEN(sel.nb.y, orig, term.bot) != BETWEEN(sel.ne.y, orig, term.bot)) {
+	/* Partial screen edits cannot move the history or split a selection. */
+	if (sel.nb.y < orig || sel.ne.y > term.bot ||
+	    sel.nb.y + n < orig || sel.ne.y + n > term.bot)
 		selclear();
-	} else if (BETWEEN(sel.nb.y, orig, term.bot)) {
-		sel.ob.y += n;
-		sel.oe.y += n;
-		if (sel.ob.y < term.top || sel.ob.y > term.bot ||
-		    sel.oe.y < term.top || sel.oe.y > term.bot) {
-			selclear();
-		} else {
-			selnormalize();
-		}
-	}
+	else
+		selshift(n);
 }
 
 void
@@ -1277,7 +1320,7 @@ tsetchar(Rune u, const Glyph *attr, int x, int y)
 		term.line[y][x-1].mode &= ~ATTR_WIDE;
 	}
 
-	term.dirty[y] = 1;
+	tsetdirtbuffer(y, y);
 	term.line[y][x] = *attr;
 	term.line[y][x].u = u;
 }
@@ -1299,10 +1342,10 @@ tclearregion(int x1, int y1, int x2, int y2)
 	LIMIT(y2, 0, term.row-1);
 
 	for (y = y1; y <= y2; y++) {
-		term.dirty[y] = 1;
+		tsetdirtbuffer(y, y);
 		for (x = x1; x <= x2; x++) {
 			gp = &term.line[y][x];
-			if (selected(x, y))
+			if (selectedline(x, y))
 				selclear();
 			gp->fg = term.c.attr.fg;
 			gp->bg = term.c.attr.bg;
@@ -1350,7 +1393,7 @@ void
 tinsertblankline(int n)
 {
 	if (BETWEEN(term.c.y, term.top, term.bot))
-		tscrolldown(term.c.y, n, 0);
+		tscrolldown(term.c.y, n);
 }
 
 void
@@ -1805,7 +1848,7 @@ csihandle(void)
 		break;
 	case 'T': /* SD -- Scroll <n> line down */
 		DEFAULT(csiescseq.arg[0], 1);
-		tscrolldown(term.top, csiescseq.arg[0], 0);
+		tscrolldown(term.top, csiescseq.arg[0]);
 		break;
 	case 'L': /* IL -- Insert <n> blank lines */
 		DEFAULT(csiescseq.arg[0], 1);
@@ -2407,7 +2450,7 @@ eschandle(uchar ascii)
 		break;
 	case 'M': /* RI -- Reverse index */
 		if (term.c.y == term.top) {
-			tscrolldown(term.top, 1, 1);
+			tscrolldown(term.top, 1);
 		} else {
 			tmoveto(term.c.x, term.c.y-1);
 		}
@@ -2551,9 +2594,6 @@ check_control_code:
 		 */
 		return;
 	}
-	if (selected(term.c.x, term.c.y))
-		selclear();
-
 	gp = &term.line[term.c.y][term.c.x];
 	if (IS_SET(MODE_WRAP) && (term.c.state & CURSOR_WRAPNEXT)) {
 		gp->mode |= ATTR_WRAP;
@@ -2574,6 +2614,8 @@ check_control_code:
 		gp = &term.line[term.c.y][term.c.x];
 	}
 
+	if (selectedline(term.c.x, term.c.y))
+		selclear();
 	tsetchar(u, &term.c.attr, term.c.x, term.c.y);
 	term.lastc = u;
 
@@ -2640,6 +2682,11 @@ tresize(int col, int row)
 		fprintf(stderr,
 		        "tresize: error resizing to %dx%d\n", col, row);
 		return;
+	}
+	/* Reflow is intentionally not part of this scrollback implementation. */
+	if (col != term.col || row != term.row) {
+		selclear();
+		term.scr = 0;
 	}
 
 	/*

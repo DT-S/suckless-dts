@@ -1,24 +1,34 @@
 /* See LICENSE file for copyright and license details. */
 
 /* appearance */
-static const unsigned int borderpx  = 1;        /* border pixel of windows */
-static const unsigned int gappx     = 6;        /* gaps between windows */
+static const unsigned int borderpx  = 5;        /* border pixel of windows */
+static const unsigned int gappx     = 15;        /* gaps between windows */
 static const unsigned int snap      = 32;       /* snap pixel */
 static const int showbar            = 1;        /* 0 means no bar */
 static const int topbar             = 1;        /* 0 means bottom bar */
-static const char *fonts[]          = { "monospace:size=10" };
-static const char dmenufont[]       = "monospace:size=10";
-static const char col_gray1[]       = "#222222";
-static const char col_gray2[]       = "#444444";
-static const char col_gray3[]       = "#bbbbbb";
-static const char col_gray4[]       = "#eeeeee";
-static const char col_cyan[]        = "#005577";
+static const char *fonts[]          = { "monospace:size=14", "SymbolsNerdFont:size=15" };
+static const char dmenufont[]       = "monospace:size=14";
+static const char col_gray1[]       = "#1d2021";
+static const char col_cyan[]        = "#1d2021";
+static const char col_gray2[]       = "#A65E2E";
+static const char col_gray3[]       = "#887c6c";
+static const char col_gray4[]       = "#F4722B";
+static const char darkgray[]        = "#1d2021";
+static const char brightgray[]      = "#4e4943";
+static const char highlightgray[]   = "#887c6c";
+static const char goldbrown[]       = "#A65E2E";
+static const char green[]           = "#91c076";
+static const char blue[]            = "#458588";
+static const char red[]             = "#fb4934";
+static const char yellow[]          = "#c4bb28";
+static const char pink[]            = "#b16286";
+static const char orange[]          = "#F4722B";
 static const unsigned int baralpha = 0xd0;
 static const unsigned int borderalpha = OPAQUE;
 static const char *colors[][3]      = {
 	/*               fg         bg         border   */
-	[SchemeNorm] = { col_gray3, col_gray1, col_gray2 },
-	[SchemeSel]  = { col_gray4, col_cyan,  col_cyan  },
+	[SchemeNorm] = { highlightgray, darkgray, goldbrown },
+	[SchemeSel]  = { orange, darkgray,  orange  },
 };
 static const unsigned int alphas[][3]      = {
     /*               fg      bg        border*/
@@ -27,13 +37,15 @@ static const unsigned int alphas[][3]      = {
 };
 
 static const char *const autostart[] = {
-	"st", NULL,
+	"sh", "-c", "feh --bg-fill ~/Pictures/Wallpaper/w2.png", NULL,
+	"picom", NULL,
+	"dunst", NULL,
+	"slstatus", NULL, 
 	NULL /* terminate */
 };
 
 /* tagging */
-static const char *tags[] = { "1", "2", "3", "4", "5", "6", "7", "8", "9" };
-
+static const char *tags[] = { "󰣇", "", "󰙯", "", "", "󰹂", "󰚌", "", "󰓇" };
 static const Rule rules[] = {
 	/* xprop(1):
 	 *	WM_CLASS(STRING) = instance, class
@@ -50,6 +62,7 @@ static const int nmaster     = 1;    /* number of clients in master area */
 static const int resizehints = 0;   /* 1 means respect size hints in tiled resizals */
 static const int attachbelow = 1;    /* 1 means attach after the currently active window */
 static const int lockfullscreen = 1; /* 1 will force focus on the fullscreen window */
+static const int refreshrate = 120;  /* refresh rate (per second) for client move/resize */
 
 static const Layout layouts[] = {
 	/* symbol     arrange function */
@@ -59,7 +72,7 @@ static const Layout layouts[] = {
 };
 
 /* key definitions */
-#define MODKEY Mod1Mask
+#define MODKEY Mod4Mask
 #define TAGKEYS(KEY,TAG) \
 	{ MODKEY,                       KEY,      view,           {.ui = 1 << TAG} }, \
 	{ MODKEY|ControlMask,           KEY,      toggleview,     {.ui = 1 << TAG} }, \

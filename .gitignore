@@ -1,0 +1,14 @@
+*.o
+*.rej
+*.orig
+*.swp
+*.swo
+core
+core.*
+
+/build/
+/dwm/dwm
+/st/st
+/dmenu/dmenu
+/dmenu/stest
+/slstatus/slstatus

@@ -1,0 +1,77 @@
+name: Full suckless stack
+
+on:
+  push:
+    branches:
+      - feat/suckless-refresh-2026
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  integrated-stack:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Validate stack scripts
+        run: |
+          sh -n scripts/build-stack.sh
+          sh -n scripts/test-stack-xephyr.sh
+          sh -n scripts/smoke-stack-xvfb.sh
+          sh -n scripts/install-stack.sh
+          sh -n scripts/rollback-stack.sh
+
+      - name: Install build and X11 test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes \
+            build-essential \
+            libfontconfig1-dev \
+            libfreetype6-dev \
+            libx11-dev \
+            libxext-dev \
+            libxft-dev \
+            libxinerama-dev \
+            libxrender-dev \
+            ncurses-bin \
+            x11-utils \
+            xdotool \
+            xvfb
+
+      - name: Build and smoke-test the integrated stack
+        run: ./scripts/smoke-stack-xvfb.sh
+
+      - name: Exercise safe installation and rollback
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          ./scripts/install-stack.sh
+          test -x /usr/local/bin/dwm
+          test -x /usr/local/bin/st
+          test -x /usr/local/bin/dmenu
+          test -x /usr/local/bin/slstatus
+
+          backup=$(readlink -f "$HOME/.local/state/suckless-dts/backups/latest")
+          test -f "$backup/manifest.tsv"
+          ./scripts/rollback-stack.sh "$backup"
+
+          while IFS=$'\t' read -r action target; do
+            if [[ "$action" == "remove" ]]; then
+              test ! -e "$target"
+            fi
+          done < "$backup/manifest.tsv"
+
+      - name: Upload staged installation
+        uses: actions/upload-artifact@v4
+        with:
+          name: suckless-stack-staged
+          path: |
+            build/stack/root
+            build/stack/BUILD_INFO
+            build/stack/st.info
+          if-no-files-found: error

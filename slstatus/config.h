@@ -1,7 +1,7 @@
 /* See LICENSE file for copyright and license details. */
 
 /* interval between updates (in ms) */
-const unsigned int interval = 1000;
+const unsigned int interval = 500;
 
 /* text to show if no value can be retrieved */
 static const char unknown_str[] = "n/a";
@@ -67,8 +67,8 @@ static const struct arg args[] = {
 	/* function format          argument */
 	{ ram_perc, "󰍛 %s%% ", NULL },
 	{ cpu_perc, "󰻠 %s%% ", NULL },
-	{ netspeed_rx, "󰅢 %skb/s ", "enp24s0" },
-	{ netspeed_tx, "󰅧 %skb/s ", "enp24s0" },
+	{ netspeed_rx, "󰅢 %skb/s ", "enp8s0" },
+	{ netspeed_tx, "󰅧 %skb/s ", "enp8s0" },
 	{ datetime, "%s",           " %a %F 󰥔 %T" },
 };
 

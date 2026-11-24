@@ -50,7 +50,6 @@
 #define INTERSECT(x,y,w,h,m)    (MAX(0, MIN((x)+(w),(m)->wx+(m)->ww) - MAX((x),(m)->wx)) \
                                * MAX(0, MIN((y)+(h),(m)->wy+(m)->wh) - MAX((y),(m)->wy)))
 #define ISVISIBLE(C)            ((C->tags & C->mon->tagset[C->mon->seltags]))
-#define LENGTH(X)               (sizeof X / sizeof X[0])
 #define MOUSEMASK               (BUTTONMASK|PointerMotionMask)
 #define WIDTH(X)                ((X)->w + 2 * (X)->bw + gappx)
 #define HEIGHT(X)               ((X)->h + 2 * (X)->bw + gappx)
@@ -144,11 +143,12 @@ typedef struct {
 
 /* function declarations */
 static void applyrules(Client *c);
+static void autostart_exec(void);
 static int applysizehints(Client *c, int *x, int *y, int *w, int *h, int interact);
 static void arrange(Monitor *m);
 static void arrangemon(Monitor *m);
 static void attach(Client *c);
-static void attachBelow(Client *c);
+static void attachbelowclient(Client *c);
 static void attachstack(Client *c);
 static void buttonpress(XEvent *e);
 static void checkotherwm(void);
@@ -206,6 +206,7 @@ static void setlayout(const Arg *arg);
 static void setmfact(const Arg *arg);
 static void setup(void);
 static void seturgent(Client *c, int urg);
+static void sigchld(int unused);
 static void showhide(Client *c);
 static void spawn(const Arg *arg);
 static void tag(const Arg *arg);
@@ -234,9 +235,8 @@ static Monitor *wintomon(Window w);
 static int xerror(Display *dpy, XErrorEvent *ee);
 static int xerrordummy(Display *dpy, XErrorEvent *ee);
 static int xerrorstart(Display *dpy, XErrorEvent *ee);
-static void xinitvisual();
+static void xinitvisual(void);
 static void zoom(const Arg *arg);
-static void autostart_exec(void);
 
 /* variables */
 static const char broken[] = "broken";
@@ -283,32 +283,56 @@ static Colormap cmap;
 /* compile-time check if all tags fit into an unsigned int bit array. */
 struct NumTags { char limitexceeded[LENGTH(tags) > 31 ? -1 : 1]; };
 
-/* dwm will keep pid's of processes from autostart array and kill them at quit */
+/* Track long-running commands started from the config.h autostart array. */
 static pid_t *autostart_pids;
 static size_t autostart_len;
 
-/* execute command from autostart array */
-static void
-autostart_exec() {
+void
+autostart_exec(void)
+{
 	const char *const *p;
+	pid_t pid;
+	sigset_t block, previous;
+	struct sigaction sa;
 	size_t i = 0;
 
-	/* count entries */
 	for (p = autostart; *p; autostart_len++, p++)
 		while (*++p);
+	if (autostart_len == 0)
+		return;
 
-	autostart_pids = malloc(autostart_len * sizeof(pid_t));
+	autostart_pids = ecalloc(autostart_len, sizeof(*autostart_pids));
+	sigemptyset(&block);
+	sigaddset(&block, SIGCHLD);
+	if (sigprocmask(SIG_BLOCK, &block, &previous) == -1)
+		die("dwm: cannot block SIGCHLD:");
+
 	for (p = autostart; *p; i++, p++) {
-		if ((autostart_pids[i] = fork()) == 0) {
+		pid = fork();
+		if (pid == 0) {
+			sigprocmask(SIG_SETMASK, &previous, NULL);
+			if (dpy)
+				close(ConnectionNumber(dpy));
 			setsid();
+			sigemptyset(&sa.sa_mask);
+			sa.sa_flags = 0;
+			sa.sa_handler = SIG_DFL;
+			sigaction(SIGCHLD, &sa, NULL);
 			execvp(*p, (char *const *)p);
-			fprintf(stderr, "dwm: execvp %s\n", *p);
-			perror(" failed");
+			fprintf(stderr, "dwm: execvp '%s' failed: %s\n", *p, strerror(errno));
 			_exit(EXIT_FAILURE);
 		}
-		/* skip arguments */
+		if (pid < 0) {
+			perror("dwm: fork");
+			autostart_pids[i] = -1;
+		} else {
+			autostart_pids[i] = pid;
+		}
 		while (*++p);
 	}
+
+	if (sigprocmask(SIG_SETMASK, &previous, NULL) == -1)
+		die("dwm: cannot restore signal mask:");
 }
 
 /* function implementations */
@@ -444,20 +468,19 @@ attach(Client *c)
 	c->next = c->mon->clients;
 	c->mon->clients = c;
 }
+
 void
-attachBelow(Client *c)
+attachbelowclient(Client *c)
 {
-	//If there is nothing on the monitor or the selected client is floating, attach as normal
-	if(c->mon->sel == NULL || c->mon->sel == c || c->mon->sel->isfloating) {
+	Client *selected = c->mon->sel;
+
+	if (!selected || selected == c || selected->isfloating) {
 		attach(c);
 		return;
 	}
 
-	//Set the new client's next property to the same as the currently selected clients next
-	c->next = c->mon->sel->next;
-	//Set the currently selected clients next property to the new client
-	c->mon->sel->next = c;
-
+	c->next = selected->next;
+	selected->next = c;
 }
 
 void
@@ -539,7 +562,7 @@ cleanup(void)
 	for (i = 0; i < CurLast; i++)
 		drw_cur_free(drw, cursor[i]);
 	for (i = 0; i < LENGTH(colors); i++)
-		free(scheme[i]);
+		drw_scm_free(drw, scheme[i], 3);
 	free(scheme);
 	XDestroyWindow(dpy, wmcheckwin);
 	drw_free(drw);
@@ -917,13 +940,14 @@ Atom
 getatomprop(Client *c, Atom prop)
 {
 	int di;
-	unsigned long dl;
+	unsigned long nitems, dl;
 	unsigned char *p = NULL;
 	Atom da, atom = None;
 
 	if (XGetWindowProperty(dpy, c->win, prop, 0L, sizeof atom, False, XA_ATOM,
-		&da, &di, &dl, &dl, &p) == Success && p) {
-		atom = *(Atom *)p;
+		&da, &di, &nitems, &dl, &p) == Success && p) {
+		if (nitems > 0)
+			atom = *(Atom *)p;
 		XFree(p);
 	}
 	return atom;
@@ -1128,8 +1152,8 @@ manage(Window w, XWindowAttributes *wa)
 		c->isfloating = c->oldstate = trans != None || c->isfixed;
 	if (c->isfloating)
 		XRaiseWindow(dpy, c->win);
-	if( attachbelow )
-		attachBelow(c);
+	if (attachbelow)
+		attachbelowclient(c);
 	else
 		attach(c);
 	attachstack(c);
@@ -1229,7 +1253,7 @@ movemouse(const Arg *arg)
 			handler[ev.type](&ev);
 			break;
 		case MotionNotify:
-			if ((ev.xmotion.time - lasttime) <= (1000 / 60))
+			if ((ev.xmotion.time - lasttime) <= (1000 / refreshrate))
 				continue;
 			lasttime = ev.xmotion.time;
 
@@ -1317,14 +1341,9 @@ quit(const Arg *arg)
 {
 	size_t i;
 
-	/* kill child processes */
-	for (i = 0; i < autostart_len; i++) {
-		if (0 < autostart_pids[i]) {
+	for (i = 0; i < autostart_len; i++)
+		if (autostart_pids && autostart_pids[i] > 0)
 			kill(autostart_pids[i], SIGTERM);
-			waitpid(autostart_pids[i], NULL, 0);
-		}
-	}
-
 	running = 0;
 }
 
@@ -1352,37 +1371,33 @@ resize(Client *c, int x, int y, int w, int h, int interact)
 void
 resizeclient(Client *c, int x, int y, int w, int h)
 {
-	XWindowChanges wc;
-	unsigned int n;
-	unsigned int gapoffset;
-	unsigned int gapincr;
 	Client *nbc;
+	XWindowChanges wc;
+	int gapincr, gapoffset;
+	unsigned int n;
 
-	wc.border_width = c->bw;
+	for (n = 0, nbc = nexttiled(c->mon->clients); nbc;
+	     nbc = nexttiled(nbc->next), n++);
 
-	/* Get number of clients for the client's monitor */
-	for (n = 0, nbc = nexttiled(c->mon->clients); nbc; nbc = nexttiled(nbc->next), n++);
-
-	/* Do nothing if layout is floating */
-	if (c->isfloating || c->mon->lt[c->mon->sellt]->arrange == NULL) {
+	if (c->isfloating || !c->mon->lt[c->mon->sellt]->arrange) {
 		gapincr = gapoffset = 0;
+	} else if (c->mon->lt[c->mon->sellt]->arrange == monocle || n == 1) {
+		gapoffset = 0;
+		gapincr = -2 * (int)borderpx;
+		wc.border_width = 0;
 	} else {
-		/* Remove border and gap if layout is monocle or only one client */
-		if (c->mon->lt[c->mon->sellt]->arrange == monocle || n == 1) {
-			gapoffset = 0;
-			gapincr = -2 * borderpx;
-			wc.border_width = 0;
-		} else {
-			gapoffset = gappx;
-			gapincr = 2 * gappx;
-		}
+		gapoffset = gappx;
+		gapincr = 2 * (int)gappx;
 	}
+
+	if (c->isfloating || !c->mon->lt[c->mon->sellt]->arrange
+	|| (c->mon->lt[c->mon->sellt]->arrange != monocle && n != 1))
+		wc.border_width = c->bw;
 
 	c->oldx = c->x; c->x = wc.x = x + gapoffset;
 	c->oldy = c->y; c->y = wc.y = y + gapoffset;
 	c->oldw = c->w; c->w = wc.width = w - gapincr;
 	c->oldh = c->h; c->h = wc.height = h - gapincr;
-
 	XConfigureWindow(dpy, c->win, CWX|CWY|CWWidth|CWHeight|CWBorderWidth, &wc);
 	configure(c);
 	XSync(dpy, False);
@@ -1417,7 +1432,7 @@ resizemouse(const Arg *arg)
 			handler[ev.type](&ev);
 			break;
 		case MotionNotify:
-			if ((ev.xmotion.time - lasttime) <= (1000 / 60))
+			if ((ev.xmotion.time - lasttime) <= (1000 / refreshrate))
 				continue;
 			lasttime = ev.xmotion.time;
 
@@ -1518,8 +1533,8 @@ sendmon(Client *c, Monitor *m)
 	detachstack(c);
 	c->mon = m;
 	c->tags = m->tagset[m->seltags]; /* assign tags of target monitor */
-	if( attachbelow )
-		attachBelow(c);
+	if (attachbelow)
+		attachbelowclient(c);
 	else
 		attach(c);
 	attachstack(c);
@@ -1638,11 +1653,12 @@ setup(void)
 	Atom utf8string;
 	struct sigaction sa;
 
-	/* do not transform children into zombies when they terminate */
+	/* Reap children while retaining PIDs for managed autostart commands. */
 	sigemptyset(&sa.sa_mask);
-	sa.sa_flags = SA_NOCLDSTOP | SA_NOCLDWAIT | SA_RESTART;
-	sa.sa_handler = SIG_IGN;
-	sigaction(SIGCHLD, &sa, NULL);
+	sa.sa_flags = SA_NOCLDSTOP | SA_RESTART;
+	sa.sa_handler = sigchld;
+	if (sigaction(SIGCHLD, &sa, NULL) == -1)
+		die("dwm: cannot install SIGCHLD handler:");
 
 	/* clean up any zombies (inherited from .xinitrc etc) immediately */
 	while (waitpid(-1, NULL, WNOHANG) > 0);
@@ -1722,10 +1738,23 @@ seturgent(Client *c, int urg)
 }
 
 void
-showhide(Client *c)
+sigchld(int unused)
 {
 	pid_t pid;
+	size_t i;
 
+	(void)unused;
+	while ((pid = waitpid(-1, NULL, WNOHANG)) > 0)
+		for (i = 0; i < autostart_len; i++)
+			if (autostart_pids && autostart_pids[i] == pid) {
+				autostart_pids[i] = -1;
+				break;
+			}
+}
+
+void
+showhide(Client *c)
+{
 	if (!c)
 		return;
 	if (ISVISIBLE(c)) {
@@ -1738,21 +1767,6 @@ showhide(Client *c)
 		/* hide clients bottom up */
 		showhide(c->snext);
 		XMoveWindow(dpy, c->win, WIDTH(c) * -2, c->y);
-	}
-	while (0 < (pid = waitpid(-1, NULL, WNOHANG))) {
-		pid_t *p, *lim;
-
-		if (!(p = autostart_pids))
-			continue;
-		lim = &p[autostart_len];
-
-		for (; p < lim; p++) {
-			if (*p == pid) {
-				*p = -1;
-				break;
-			}
-		}
-
 	}
 }
 
@@ -1813,7 +1827,9 @@ tile(Monitor *m)
 	for (i = my = ty = 0, c = nexttiled(m->clients); c; c = nexttiled(c->next), i++)
 		if (i < m->nmaster) {
 			h = (m->wh - my) / (MIN(n, m->nmaster) - i);
-			resize(c, m->wx, m->wy + my, mw - (2*c->bw) + (n > 1 ? gappx : 0), h - (2*c->bw), 0);
+			resize(c, m->wx, m->wy + my,
+			       mw - (2*c->bw) + (n > 1 ? gappx : 0),
+			       h - (2*c->bw), 0);
 			if (my + HEIGHT(c) < m->wh)
 				my += HEIGHT(c);
 		} else {
@@ -1965,7 +1981,7 @@ updatebarpos(Monitor *m)
 }
 
 void
-updateclientlist()
+updateclientlist(void)
 {
 	Client *c;
 	Monitor *m;
@@ -2029,10 +2045,10 @@ updategeom(void)
 				m->clients = c->next;
 				detachstack(c);
 				c->mon = mons;
-					if( attachbelow )
-						attachBelow(c);
-					else
-						attach(c);
+				if (attachbelow)
+					attachbelowclient(c);
+				else
+					attach(c);
 				attachstack(c);
 			}
 			if (m == selmon)
@@ -2246,15 +2262,15 @@ xerrorstart(Display *dpy, XErrorEvent *ee)
 }
 
 void
-xinitvisual()
+xinitvisual(void)
 {
-    XVisualInfo *infos;
+	XVisualInfo *infos;
 	XRenderPictFormat *fmt;
 	int nitems;
 	int i;
 
 	XVisualInfo tpl = {
-        .screen = screen,
+		.screen = screen,
 		.depth = 32,
 		.class = TrueColor
 	};
@@ -2262,24 +2278,24 @@ xinitvisual()
 
 	infos = XGetVisualInfo(dpy, masks, &tpl, &nitems);
 	visual = NULL;
-	for(i = 0; i < nitems; i ++) {
-        fmt = XRenderFindVisualFormat(dpy, infos[i].visual);
+	for (i = 0; i < nitems; i++) {
+		fmt = XRenderFindVisualFormat(dpy, infos[i].visual);
 		if (fmt->type == PictTypeDirect && fmt->direct.alphaMask) {
-            visual = infos[i].visual;
+			visual = infos[i].visual;
 			depth = infos[i].depth;
 			cmap = XCreateColormap(dpy, root, visual, AllocNone);
 			useargb = 1;
 			break;
-        }
-    }
+		}
+	}
 
 	XFree(infos);
 
-	if (! visual) {
-        visual = DefaultVisual(dpy, screen);
+	if (!visual) {
+		visual = DefaultVisual(dpy, screen);
 		depth = DefaultDepth(dpy, screen);
 		cmap = DefaultColormap(dpy, screen);
-    }
+	}
 }
 
 void
@@ -2306,8 +2322,8 @@ main(int argc, char *argv[])
 	if (!(dpy = XOpenDisplay(NULL)))
 		die("dwm: cannot open display");
 	checkotherwm();
-	autostart_exec();
 	setup();
+	autostart_exec();
 #ifdef __OpenBSD__
 	if (pledge("stdio rpath proc exec", NULL) == -1)
 		die("pledge");

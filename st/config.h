@@ -98,25 +98,25 @@ float alpha = 0.8;
 
 /* Terminal colors (16 first used in escape sequence) */
 static const char *colorname[] = {
-	/* 8 normal colors */
-	"black",
-	"red3",
-	"green3",
-	"yellow3",
-	"blue2",
-	"magenta3",
-	"cyan3",
-	"gray90",
+/* Normal Colors	*/
+        "#252525",      /*      - darkgray              */
+        "#441A19",      /*      - darkred               */
+        "#66BB6A",      /*      - darkgreen             */
+        "#0067A6",      /*      - darkblue              */
+        "#9C9B7A",      /*      - darkearth             */
+        "#FFD393",      /*      - darkbeige             */
+        "#FF974F",      /*      - darkorangebrown       */
+        "#F54F29",      /*      - darkorange            */
 
-	/* 8 bright colors */
-	"gray50",
-	"red",
-	"green",
-	"yellow",
-	"#5c5cff",
-	"magenta",
-	"cyan",
-	"white",
+/* Bright Colors        */
+        "#4E4946",      /*      - brightgray            */
+        "#A43D3D",      /*      - brightred             */
+        "#94FF99",      /*      - brightgreen           */
+        "#049FFF",      /*      - brightblue            */
+        "#DFDFB3",      /*      - brightearth           */
+        "#FFE3BD",      /*      - brightbeige           */
+        "#FFB27A",      /*      - brightorangebrown     */
+        "#FF8F75",      /*      - brightorange          */
 
 	[255] = 0,
 
@@ -124,7 +124,26 @@ static const char *colorname[] = {
 	"#cccccc",
 	"#555555",
 	"gray90", /* default foreground colour */
-	"black", /* default background colour */
+	[257] = "black", /* default background colour */
+        /* 8 normal colors */
+   	"#252525",
+        "#441A19",
+        "#66BB6A",
+        "#0067A6",
+        "#9C9B7A",
+        "#FFD393",
+        "#FF974F",
+        [258] = "#F54F29",
+
+        /* 8 bright colors */
+        "#4e4946",
+        "#A43D3D",
+        "#94FF99",
+        "#049FFF",
+        "#DFDFB3",
+        "#FFE3BD",
+        "#FFB2A7",
+        [256] = "#FF8F75",
 };
 
 
@@ -133,9 +152,9 @@ static const char *colorname[] = {
  * foreground, background, cursor, reverse cursor
  */
 unsigned int defaultfg = 258;
-unsigned int defaultbg = 259;
+unsigned int defaultbg = 257;
 unsigned int defaultcs = 256;
-static unsigned int defaultrcs = 257;
+static unsigned int defaultrcs = 0;
 
 /*
  * Default shape of cursor
@@ -204,6 +223,8 @@ static Shortcut shortcuts[] = {
 	{ TERMMOD,              XK_Y,           selpaste,       {.i =  0} },
 	{ ShiftMask,            XK_Insert,      selpaste,       {.i =  0} },
 	{ TERMMOD,              XK_Num_Lock,    numlock,        {.i =  0} },
+	{ ShiftMask,            XK_Page_Up,     kscrollup,      {.i = -1} },
+	{ ShiftMask,            XK_Page_Down,   kscrolldown,    {.i = -1} },
 };
 
 /*

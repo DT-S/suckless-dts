@@ -1,24 +1,34 @@
 /* See LICENSE file for copyright and license details. */
 
 /* appearance */
-static const unsigned int borderpx  = 3;        /* border pixel of windows */
+static const unsigned int borderpx  = 5;        /* border pixel of windows */
 static const unsigned int gappx     = 15;        /* gaps between windows */
 static const unsigned int snap      = 32;       /* snap pixel */
 static const int showbar            = 1;        /* 0 means no bar */
 static const int topbar             = 1;        /* 0 means bottom bar */
-static const char *fonts[]          = { "monospace:size=10", "SymbolsNerdFont:size=15" };
-static const char dmenufont[]       = "monospace:size=10";
-static const char col_gray1[]       = "#222222";
-static const char col_gray2[]       = "#444444";
-static const char col_gray3[]       = "#bbbbbb";
-static const char col_gray4[]       = "#eeeeee";
-static const char col_cyan[]        = "#005577";
+static const char *fonts[]          = { "monospace:size=14", "SymbolsNerdFont:size=15" };
+static const char dmenufont[]       = "monospace:size=14";
+static const char col_gray1[]       = "#1d2021";
+static const char col_cyan[]        = "#1d2021";
+static const char col_gray2[]       = "#A65E2E";
+static const char col_gray3[]       = "#887c6c";
+static const char col_gray4[]       = "#F4722B";
+static const char darkgray[]        = "#1d2021";
+static const char brightgray[]      = "#4e4943";
+static const char highlightgray[]   = "#887c6c";
+static const char goldbrown[]       = "#A65E2E";
+static const char green[]           = "#91c076";
+static const char blue[]            = "#458588";
+static const char red[]             = "#fb4934";
+static const char yellow[]          = "#c4bb28";
+static const char pink[]            = "#b16286";
+static const char orange[]          = "#F4722B";
 static const unsigned int baralpha = 0xd0;
 static const unsigned int borderalpha = OPAQUE;
 static const char *colors[][3]      = {
 	/*               fg         bg         border   */
-	[SchemeNorm] = { col_gray3, col_gray1, col_gray2 },
-	[SchemeSel]  = { col_gray4, col_cyan,  col_cyan  },
+	[SchemeNorm] = { highlightgray, darkgray, goldbrown },
+	[SchemeSel]  = { orange, darkgray,  orange  },
 };
 static const unsigned int alphas[][3]      = {
     /*               fg      bg        border*/

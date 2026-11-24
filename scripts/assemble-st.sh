@@ -37,15 +37,28 @@ fetch_patch \
 fetch_patch \
 	"https://st.suckless.org/patches/scrollback/st-scrollback-0.9.2.diff" \
 	"$scrollback_patch"
-sha256sum "$alpha_patch" "$scrollback_patch"
+
+(
+	cd "$patch_dir"
+	cat <<'EOF' | sha256sum -c -
+562f6a4baedeb89c8b6dfb2c2f14a69f9327fa8b71a5093e70219e39794b8d42  st-alpha-20240814-a0274bc.diff
+8db63bf83df06cba12cdb02e578cb49afc789c726b4c85f66e95b372562bac7a  st-scrollback-0.9.2.diff
+EOF
+)
 
 cd "$work_dir"
 
 printf '\n==> Applying ST alpha support\n'
-patch --batch --forward -p1 < "$alpha_patch"
+patch --batch --forward --no-backup-if-mismatch -p1 < "$alpha_patch"
 
 printf '\n==> Applying ST scrollback support\n'
-patch --batch --forward -p1 < "$scrollback_patch"
+patch --batch --forward --no-backup-if-mismatch -p1 < "$scrollback_patch"
+
+if find . -type f \( -name '*.rej' -o -name '*.orig' \) | grep -q .; then
+	printf '%s\n' "Patch residue found after applying ST patches:" >&2
+	find . -type f \( -name '*.rej' -o -name '*.orig' \) -print >&2
+	exit 1
+fi
 
 # Preserve the live terminal's fonts, palette, opacity and shortcuts while
 # moving the implementation to ST 0.9.3.

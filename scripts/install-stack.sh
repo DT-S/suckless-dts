@@ -88,5 +88,6 @@ trap - EXIT HUP INT TERM
 printf '\nInstalled the refreshed suckless stack.\n'
 printf 'Backup: %s\n' "$backup_dir"
 printf '\nThe current DWM process is still the old binary. Log out and back in,\n'
-printf 'or exit DWM with Super+Shift+q when you are ready to start the new one.\n'
+printf 'or quit it with its current binding (legacy setup: Alt+Shift+q).\n'
+printf 'After the next login, DWM uses Super as its modifier.\n'
 printf '\nRollback command:\n  %s/scripts/rollback-stack.sh %s\n' "$repo_root" "$backup_dir"

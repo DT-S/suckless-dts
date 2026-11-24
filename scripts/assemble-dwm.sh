@@ -58,11 +58,19 @@ if refresh_decl not in text:
 path.write_text(text, encoding="utf-8")
 PY
 
+# Keep the generated candidate's default and active configuration identical.
+cp config.h config.def.h
+
 make clean
 make
 
 out_dir="$repo_root/build/dwm"
-mkdir -p "$out_dir"
+rm -rf "$out_dir"
+mkdir -p "$out_dir/source"
 cp -f dwm "$out_dir/dwm"
+
+# Preserve reviewable, clean generated source alongside the test binary.
+make clean
+cp -a . "$out_dir/source/"
 
 printf '\nDWM 6.8 candidate built successfully: %s\n' "$out_dir/dwm"

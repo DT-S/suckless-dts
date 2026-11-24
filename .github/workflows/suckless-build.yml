@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   dwm-6-8:
@@ -219,3 +219,21 @@ jobs:
             build/st/source
             build/st/patches
           if-no-files-found: error
+
+      - name: Materialize tested ST 0.9.3 source
+        if: github.event_name == 'push' && hashFiles('.materialize-st-0.9.3') != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          rm -rf st
+          cp -a build/st/source st
+          mkdir -p st/patches
+          cp -a build/st/patches/. st/patches/
+          rm -f .materialize-st-0.9.3
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A st .materialize-st-0.9.3
+          git commit -m "refactor: materialize tested ST 0.9.3 source"
+          git push origin HEAD:"${GITHUB_REF_NAME}"

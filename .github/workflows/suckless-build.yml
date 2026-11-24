@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   dwm-6-8:
@@ -121,3 +121,26 @@ jobs:
             build/dwm/dwm
             build/dwm/source
           if-no-files-found: error
+
+      - name: Materialize tested DWM 6.8 source
+        if: ${{ hashFiles('.materialize-dwm-6.8') != '' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          rm -rf dwm
+          cp -a build/dwm/source dwm
+          find dwm -type f -exec chmod 0644 {} +
+          rm -f .materialize-dwm-6.8
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A dwm .materialize-dwm-6.8
+
+          if git diff --cached --quiet; then
+            echo "No DWM source changes to materialize."
+            exit 0
+          fi
+
+          git commit -m "refactor: materialize tested DWM 6.8 source"
+          git push

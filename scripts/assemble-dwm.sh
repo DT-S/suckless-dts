@@ -20,13 +20,13 @@ python3 "$repo_root/scripts/port-dwm-6.8-features.py" "$work_dir"
 
 cd "$work_dir"
 
-# The live configuration is the behavioural and visual baseline for the port.
-# borderpx intentionally remains 5.
+# The canonical configuration in dwm/config.h is the behavioural and visual
+# baseline for the reproducible port. borderpx intentionally remains 5.
 cp "$repo_root/dwm/config.h" config.h
 
-# Reserve Alt for applications and use the Super/Windows key for DWM. Add the
-# one configuration value introduced by DWM 6.8 that is absent from the 6.4
-# live configuration.
+# Reserve Alt for applications and use the Super/Windows key for DWM. The
+# normalization is intentionally idempotent so the same script works before
+# and after the tested 6.8 source is materialized into dwm/.
 python3 - <<'PY'
 from pathlib import Path
 
@@ -34,9 +34,17 @@ path = Path("config.h")
 text = path.read_text(encoding="utf-8")
 old = "#define MODKEY Mod1Mask"
 new = "#define MODKEY Mod4Mask"
-if text.count(old) != 1:
-    raise SystemExit(f"expected exactly one {old!r} in config.h")
-text = text.replace(old, new, 1)
+old_count = text.count(old)
+new_count = text.count(new)
+if old_count == 1 and new_count == 0:
+    text = text.replace(old, new, 1)
+elif old_count == 0 and new_count == 1:
+    pass
+else:
+    raise SystemExit(
+        f"expected exactly one Mod1 or Mod4 MODKEY declaration, "
+        f"found Mod1={old_count}, Mod4={new_count}"
+    )
 
 refresh_decl = "static const int refreshrate = 120;"
 if refresh_decl not in text:

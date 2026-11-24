@@ -83,6 +83,8 @@ void draw(void);
 
 void kscrolldown(const Arg *);
 void kscrollup(const Arg *);
+int scrollview(int);
+int tisaltscreen(void);
 void printscreen(const Arg *);
 void printsel(const Arg *);
 void sendbreak(const Arg *);
@@ -104,6 +106,7 @@ void selclear(void);
 void selinit(void);
 void selstart(int, int, int);
 void selextend(int, int, int, int);
+int selongoing(void);
 int selected(int, int);
 char *getsel(void);
 

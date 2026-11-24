@@ -117,6 +117,13 @@ typedef struct {
 	struct timespec tclick2;
 } XSelection;
 
+typedef struct {
+	XEvent event;
+	int active, direction;
+	double delay;
+	struct timespec tick;
+} MouseSelection;
+
 /* Font structure */
 #define Font Font_
 typedef struct {
@@ -183,6 +190,10 @@ static void selclear_(XEvent *);
 static void selrequest(XEvent *);
 static void setsel(char *, Time);
 static void mousesel(XEvent *, int);
+static void mouseselectionstop(void);
+static void mousescrollupdate(XEvent *);
+static double mousescrolltimeout(struct timespec);
+static int mousescroll(struct timespec);
 static void mousereport(XEvent *);
 static char *kmap(KeySym, uint);
 static int match(uint, uint);
@@ -220,6 +231,7 @@ static void (*handler[LASTEvent])(XEvent *) = {
 static DC dc;
 static XWindow xw;
 static XSelection xsel;
+static MouseSelection msel;
 static TermWindow win;
 
 /* Font Ring Cache */
@@ -349,7 +361,8 @@ void
 mousesel(XEvent *e, int done)
 {
 	int type, seltype = SEL_REGULAR;
-	uint state = e->xbutton.state & ~(Button1Mask | forcemousemod);
+	uint state = e->xbutton.state &
+	             ~(Button1Mask | Button4Mask | Button5Mask | forcemousemod);
 
 	for (type = 1; type < LEN(selmasks); ++type) {
 		if (match(selmasks[type], state)) {
@@ -360,6 +373,79 @@ mousesel(XEvent *e, int done)
 	selextend(evcol(e), evrow(e), seltype, done);
 	if (done)
 		setsel(getsel(), e->xbutton.time);
+}
+
+void
+mouseselectionstop(void)
+{
+	if (msel.active && selongoing())
+		mousesel(&msel.event, 1);
+	msel.active = msel.direction = 0;
+}
+
+void
+mousescrollupdate(XEvent *e)
+{
+	int direction = 0;
+
+	msel.event = *e;
+	if (msel.active && selongoing() && !tisaltscreen() && selscrollinterval) {
+		if (e->xbutton.y < borderpx + win.ch)
+			direction = 1;
+		else if (e->xbutton.y >= borderpx + win.th - win.ch)
+			direction = -1;
+	}
+	if (direction != msel.direction) {
+		msel.direction = direction;
+		msel.delay = selscrolldelay;
+		clock_gettime(CLOCK_MONOTONIC, &msel.tick);
+	}
+}
+
+double
+mousescrolltimeout(struct timespec now)
+{
+	if (msel.active && !selongoing())
+		msel.active = 0;
+	if (!msel.active || !selongoing() || tisaltscreen())
+		msel.direction = 0;
+	if (!msel.direction)
+		return -1;
+	return MAX(0, msel.delay - TIMEDIFF(now, msel.tick));
+}
+
+int
+mousescroll(struct timespec now)
+{
+	Window root, child;
+	int rx, ry, x, y, distance, lines;
+	uint state;
+
+	/* Keep scrolling while the pointer is stationary, but never after a
+	 * missed release or a pointer move back into the terminal's centre. */
+	if (!XQueryPointer(xw.dpy, xw.win, &root, &child, &rx, &ry,
+	                   &x, &y, &state) || !(state & Button1Mask)) {
+		mouseselectionstop();
+		return 0;
+	}
+	msel.event.xbutton.x = x;
+	msel.event.xbutton.y = y;
+	msel.event.xbutton.state = state;
+	mousescrollupdate(&msel.event);
+	if (mousescrolltimeout(now) != 0)
+		return 0;
+
+	distance = msel.direction > 0 ? borderpx - y
+	                             : y - (borderpx + win.th - 1);
+	lines = MIN(1 + MAX(0, distance) / win.ch, MAX(1, selscrollmax));
+	msel.tick = now;
+	msel.delay = selscrollinterval;
+	if (!scrollview(msel.direction * lines)) {
+		msel.direction = 0;
+		return 0;
+	}
+	mousesel(&msel.event, 0);
+	return 1;
 }
 
 void
@@ -473,11 +559,26 @@ bpress(XEvent *e)
 	struct timespec now;
 	int snap;
 
+	if (msel.active && !selongoing())
+		mouseselectionstop();
+
 	if (1 <= btn && btn <= 11)
 		buttons |= 1 << (btn-1);
 
-	if (IS_SET(MODE_MOUSE) && !(e->xbutton.state & forcemousemod)) {
+	if (IS_SET(MODE_MOUSE) && !msel.active &&
+	    !(e->xbutton.state & forcemousemod)) {
 		mousereport(e);
+		return;
+	}
+
+	/* Keep the wheel local on the normal screen, including during a drag.
+	 * Alternate-screen applications retain their existing wheel bindings. */
+	if ((btn == Button4 || btn == Button5) && !tisaltscreen()) {
+		if (scrollview((btn == Button4 ? 1 : -1) * mousescrolllines) &&
+		    msel.active)
+			mousesel(e, 0);
+		if (msel.active)
+			mousescrollupdate(e);
 		return;
 	}
 
@@ -501,6 +602,9 @@ bpress(XEvent *e)
 		xsel.tclick1 = now;
 
 		selstart(evcol(e), evrow(e), snap);
+		msel.active = 1;
+		msel.direction = 0;
+		msel.event = *e;
 	}
 }
 
@@ -703,6 +807,12 @@ brelease(XEvent *e)
 	if (1 <= btn && btn <= 11)
 		buttons &= ~(1 << (btn-1));
 
+	if (btn == Button1 && msel.active) {
+		mousesel(e, 1);
+		msel.active = msel.direction = 0;
+		return;
+	}
+
 	if (IS_SET(MODE_MOUSE) && !(e->xbutton.state & forcemousemod)) {
 		mousereport(e);
 		return;
@@ -710,25 +820,31 @@ brelease(XEvent *e)
 
 	if (mouseaction(e, 1))
 		return;
-	if (btn == Button1)
-		mousesel(e, 1);
 }
 
 void
 bmotion(XEvent *e)
 {
-	if (IS_SET(MODE_MOUSE) && !(e->xbutton.state & forcemousemod)) {
-		mousereport(e);
+	if (msel.active) {
+		if (!(e->xmotion.state & Button1Mask) || !selongoing()) {
+			mouseselectionstop();
+			return;
+		}
+		mousesel(e, 0);
+		mousescrollupdate(e);
 		return;
 	}
-
-	mousesel(e, 0);
+	if (IS_SET(MODE_MOUSE) && !(e->xbutton.state & forcemousemod)) {
+		mousereport(e);
+	}
 }
 
 void
 cresize(int width, int height)
 {
 	int col, row;
+
+	msel.active = msel.direction = 0;
 
 	if (width != 0)
 		win.w = width;
@@ -1746,6 +1862,7 @@ visibility(XEvent *ev)
 void
 unmap(XEvent *ev)
 {
+	mouseselectionstop();
 	win.mode &= ~MODE_VISIBLE;
 }
 
@@ -1809,6 +1926,7 @@ focus(XEvent *ev)
 		if (IS_SET(MODE_FOCUS))
 			ttywrite("\033[I", 3, 0);
 	} else {
+		mouseselectionstop();
 		if (xw.ime.xic)
 			XUnsetICFocus(xw.ime.xic);
 		win.mode &= ~MODE_FOCUSED;
@@ -1950,7 +2068,7 @@ run(void)
 	fd_set rfd;
 	int xfd = XConnectionNumber(xw.dpy), ttyfd, xev, drawing;
 	struct timespec seltv, *tv, now, lastblink, trigger;
-	double timeout;
+	double timeout, scrolltimeout, waittimeout;
 
 	/* Waiting for window mapping */
 	do {
@@ -1976,12 +2094,18 @@ run(void)
 		FD_SET(ttyfd, &rfd);
 		FD_SET(xfd, &rfd);
 
+		clock_gettime(CLOCK_MONOTONIC, &now);
+		waittimeout = timeout;
+		scrolltimeout = mousescrolltimeout(now);
+		if (scrolltimeout >= 0)
+			waittimeout = timeout < 0 ? scrolltimeout
+			                         : MIN(timeout, scrolltimeout);
 		if (XPending(xw.dpy))
-			timeout = 0;  /* existing events might not set xfd */
+			waittimeout = 0;  /* existing events might not set xfd */
 
-		seltv.tv_sec = timeout / 1E3;
-		seltv.tv_nsec = 1E6 * (timeout - 1E3 * seltv.tv_sec);
-		tv = timeout >= 0 ? &seltv : NULL;
+		seltv.tv_sec = waittimeout / 1E3;
+		seltv.tv_nsec = 1E6 * (waittimeout - 1E3 * seltv.tv_sec);
+		tv = waittimeout >= 0 ? &seltv : NULL;
 
 		if (pselect(MAX(xfd, ttyfd)+1, &rfd, NULL, NULL, tv, NULL) < 0) {
 			if (errno == EINTR)
@@ -2002,6 +2126,9 @@ run(void)
 			if (handler[ev.type])
 				(handler[ev.type])(&ev);
 		}
+		clock_gettime(CLOCK_MONOTONIC, &now);
+		if (mousescrolltimeout(now) == 0)
+			xev |= mousescroll(now);
 
 		/*
 		 * To reduce flicker and tearing, when new content or event

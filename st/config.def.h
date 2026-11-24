@@ -40,6 +40,13 @@ wchar_t *worddelimiters = L" ";
 static unsigned int doubleclicktimeout = 300;
 static unsigned int tripleclicktimeout = 600;
 
+/* Mouse scrollback and selection edge scrolling (milliseconds / rows).
+ * Set selscrollinterval to 0 to disable automatic edge scrolling. */
+static int mousescrolllines = 3;
+static unsigned int selscrolldelay = 200;
+static unsigned int selscrollinterval = 40;
+static int selscrollmax = 8;
+
 /* alt screens */
 int allowaltscreen = 1;
 

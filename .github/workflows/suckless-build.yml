@@ -146,12 +146,22 @@ jobs:
             libxft-dev \
             libxrender-dev \
             patch \
+            python3 \
             x11-utils \
+            xclip \
             xdotool \
             xvfb
 
       - name: Assemble and build ST 0.9.3 candidate
         run: ./scripts/assemble-st.sh
+
+      - name: Check persistent selection and history boundaries
+        run: ./scripts/test-st-selection.sh
+        env:
+          ST_TEST_SANITIZERS: address,undefined
+
+      - name: Check mouse scrolling and actual clipboard contents
+        run: python3 scripts/test-st-selection-xvfb.py --st ./build/st/st
 
       - name: Smoke-test ST under Xvfb
         shell: bash

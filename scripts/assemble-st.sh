@@ -4,46 +4,23 @@ set -eu
 repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 source_dir="$repo_root/New Versions of DWM/st-0.9.3"
 work_dir=$(mktemp -d "${TMPDIR:-/tmp}/suckless-st-0.9.3.XXXXXX")
-patch_dir=$(mktemp -d "${TMPDIR:-/tmp}/suckless-st-patches.XXXXXX")
+patch_dir="$repo_root/st/patches"
 
 cleanup() {
-	rm -rf "$work_dir" "$patch_dir"
+	rm -rf "$work_dir"
 }
 trap cleanup EXIT HUP INT TERM
-
-fetch_patch() {
-	url=$1
-	destination=$2
-
-	if command -v curl >/dev/null 2>&1; then
-		curl --proto '=https' --tlsv1.2 -fsSL "$url" -o "$destination"
-	elif command -v wget >/dev/null 2>&1; then
-		wget -qO "$destination" "$url"
-	else
-		printf '%s\n' "Neither curl nor wget is available to fetch $url" >&2
-		exit 1
-	fi
-}
 
 cp -a "$source_dir/." "$work_dir/"
 
 alpha_patch="$patch_dir/st-alpha-20240814-a0274bc.diff"
 scrollback_patch="$patch_dir/st-scrollback-0.9.2.diff"
+selection_patch="$patch_dir/st-scrollback-selection-0.9.3.diff"
 
-printf '\n==> Fetching pinned official ST patches\n'
-fetch_patch \
-	"https://st.suckless.org/patches/alpha/st-alpha-20240814-a0274bc.diff" \
-	"$alpha_patch"
-fetch_patch \
-	"https://st.suckless.org/patches/scrollback/st-scrollback-0.9.2.diff" \
-	"$scrollback_patch"
-
+printf '\n==> Verifying pinned ST patches\n'
 (
 	cd "$patch_dir"
-	cat <<'EOF' | sha256sum -c -
-562f6a4baedeb89c8b6dfb2c2f14a69f9327fa8b71a5093e70219e39794b8d42  st-alpha-20240814-a0274bc.diff
-8db63bf83df06cba12cdb02e578cb49afc789c726b4c85f66e95b372562bac7a  st-scrollback-0.9.2.diff
-EOF
+	sha256sum -c SHA256SUMS
 )
 
 cd "$work_dir"
@@ -53,6 +30,9 @@ patch --batch --forward --no-backup-if-mismatch -p1 < "$alpha_patch"
 
 printf '\n==> Applying ST scrollback support\n'
 patch --batch --forward --no-backup-if-mismatch -p1 < "$scrollback_patch"
+
+printf '\n==> Applying persistent selection and mouse edge scrolling\n'
+patch --batch --forward --no-backup-if-mismatch -p1 < "$selection_patch"
 
 if find . -type f \( -name '*.rej' -o -name '*.orig' \) | grep -q .; then
 	printf '%s\n' "Patch residue found after applying ST patches:" >&2
@@ -99,6 +79,14 @@ PY
 # Keep default and active configuration in sync.
 cp config.h config.def.h
 
+# Both the regular build and the assembled candidate must use the same code.
+for file in st.c st.h x.c st.1; do
+	if ! cmp -s "$file" "$repo_root/st/$file"; then
+		printf 'Assembled ST source differs from st/%s\n' "$file" >&2
+		exit 1
+	fi
+done
+
 make clean
 make
 
@@ -106,7 +94,7 @@ out_dir="$repo_root/build/st"
 rm -rf "$out_dir"
 mkdir -p "$out_dir/source" "$out_dir/patches"
 cp -f st "$out_dir/st"
-cp -f "$alpha_patch" "$scrollback_patch" "$out_dir/patches/"
+cp -f "$alpha_patch" "$scrollback_patch" "$selection_patch" "$out_dir/patches/"
 (
 	cd "$out_dir/patches"
 	sha256sum ./*.diff > SHA256SUMS

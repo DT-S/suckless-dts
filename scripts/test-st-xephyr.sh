@@ -94,7 +94,8 @@ DISPLAY="$display" "$repo_root/build/st/st" -e /bin/sh -lc '
 		printf "ST 0.9.3 scrollback test line %03d\n" "$i"
 		i=$((i + 1))
 	done
-	printf "\nUse Shift+PageUp/PageDown to inspect the history.\n"
+	printf "\nDrag to the top/bottom edge or use the wheel to select across history.\n"
+	printf "Release, then Ctrl+Shift+C to copy. Shift+PageUp/PageDown also work.\n"
 	exec "${SHELL:-/bin/sh}"
 ' &
 st_pid=$!
@@ -106,6 +107,10 @@ Check the automatically opened terminal for:
   - the existing font and colour palette
   - 80 percent background opacity
   - Shift+PageUp / Shift+PageDown scrollback
+  - mouse wheel scrollback, including while holding a selection
+  - stationary drag at the top/bottom row automatically scrolls
+  - dragging farther outside the window increases scrolling speed
+  - release or move back to the centre to stop edge scrolling
   - Ctrl+Shift+C / Ctrl+Shift+V
   - normal application Alt shortcuts
 
